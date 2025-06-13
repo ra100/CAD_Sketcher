@@ -24,14 +24,28 @@ class Point2D(Entity2D):
         return True
 
     def update(self):
+        """Update the point's visual representation with thick geometry for Vulkan compatibility.
+
+        Creates a triangle-based quad geometry for better visibility across different
+        graphics backends, especially Vulkan where traditional point rendering may
+        result in barely visible 1px points.
+        """
         if bpy.app.background:
             return
 
-        coords, indices = draw_thick_point_3d(self.location, self.point_size)
-        kwargs = {"pos": coords}
-        self._batch = batch_for_shader(self._shader, "TRIS", kwargs, indices=indices)
+        try:
+            coords, indices = draw_thick_point_3d(self.location, self.point_size)
+            if not coords:
+                # Fallback to ensure we have something to render
+                logger.warning(f"Failed to create thick point geometry for {self}")
+                return
 
-        self.is_dirty = False
+            kwargs = {"pos": coords}
+            self._batch = batch_for_shader(self._shader, "TRIS", kwargs, indices=indices)
+            self.is_dirty = False
+        except Exception as e:
+            logger.error(f"Error updating point {self}: {e}")
+            self.is_dirty = False  # Prevent infinite update loops
 
     @property
     def location(self):

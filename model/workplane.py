@@ -10,7 +10,7 @@ from bpy.utils import register_classes_factory
 
 from ..declarations import Operators
 from .. import global_data
-from ..utilities.draw import draw_rect_2d, draw_thick_line_3d, draw_thick_dashed_line_3d
+from ..utilities.draw import draw_rect_2d, draw_thick_line_3d, draw_thick_dashed_line_3d, WORKPLANE_LINE_SCALE
 from ..shaders import Shaders
 from ..utilities import preferences
 from ..solver import Solver
@@ -49,7 +49,7 @@ class SlvsWorkplane(SlvsGenericEntity, PropertyGroup):
         rect_coords = [Vector(co) for co in rect_coords]
 
         # Use a much smaller width for workplane edges (accounting for view distance scaling)
-        line_width = 0.2
+        line_width = WORKPLANE_LINE_SCALE
 
         all_coords = []
         all_indices = []

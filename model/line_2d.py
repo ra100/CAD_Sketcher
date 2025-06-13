@@ -49,19 +49,32 @@ class SlvsLine2D(Entity2D, PropertyGroup):
         return self.construction
 
     def update(self):
+        """Update the line's visual representation with thick geometry for Vulkan compatibility.
+
+        Creates triangle-based geometry for both solid and dashed lines to ensure
+        consistent visibility across different graphics backends.
+        """
         if bpy.app.background:
             return
 
-        p1, p2 = self.p1.location, self.p2.location
+        try:
+            p1, p2 = self.p1.location, self.p2.location
 
-        if self.is_dashed():
-            coords, indices = draw_thick_dashed_line_3d(p1, p2, self.line_width)
-        else:
-            coords, indices = draw_thick_line_3d(p1, p2, self.line_width)
-        kwargs = {"pos": coords}
-        self._batch = batch_for_shader(self._shader, "TRIS", kwargs, indices=indices)
+            if self.is_dashed():
+                coords, indices = draw_thick_dashed_line_3d(p1, p2, self.line_width)
+            else:
+                coords, indices = draw_thick_line_3d(p1, p2, self.line_width)
 
-        self.is_dirty = False
+            if not coords:
+                logger.warning(f"Failed to create thick line geometry for {self}")
+                return
+
+            kwargs = {"pos": coords}
+            self._batch = batch_for_shader(self._shader, "TRIS", kwargs, indices=indices)
+            self.is_dirty = False
+        except Exception as e:
+            logger.error(f"Error updating line {self}: {e}")
+            self.is_dirty = False
 
     def create_slvs_data(self, solvesys, group=Solver.group_fixed):
         handle = solvesys.addLineSegment(self.p1.py_data, self.p2.py_data, group=group)
