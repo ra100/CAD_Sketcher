@@ -6,7 +6,7 @@ from bpy.props import FloatVectorProperty
 from gpu_extras.batch import batch_for_shader
 from bpy.utils import register_classes_factory
 
-from ..utilities.draw import draw_cube_3d
+from ..utilities.draw import draw_cube_3d, draw_thick_point_3d
 from ..solver import Solver
 from .base_entity import SlvsGenericEntity
 
@@ -23,10 +23,10 @@ class Point3D(SlvsGenericEntity):
         if bpy.app.background:
             return
 
-        coords, indices = draw_cube_3d(*self.location, 0.05)
-        self._batch = batch_for_shader(
-            self._shader, "POINTS", {"pos": (self.location[:],)}
-        )
+        coords, indices = draw_thick_point_3d(self.location, self.point_size)
+        kwargs = {"pos": coords}
+        self._batch = batch_for_shader(self._shader, "TRIS", kwargs, indices=indices)
+
         self.is_dirty = False
 
     # TODO: maybe rename -> pivot_point, midpoint

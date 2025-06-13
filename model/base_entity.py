@@ -63,15 +63,11 @@ class SlvsGenericEntity:
 
     @property
     def _shader(self):
-        if self.is_point():
-            return Shaders.uniform_color_3d()
-        return Shaders.uniform_color_line_3d()
+        return Shaders.uniform_color_3d()
 
     @property
     def _id_shader(self):
-        if self.is_point():
-            return Shaders.id_shader_3d()
-        return Shaders.id_line_3d()
+        return Shaders.id_shader_3d()
 
     @property
     def point_size(self):
@@ -222,17 +218,17 @@ class SlvsGenericEntity:
         shader = self._shader
         shader.bind()
 
+        # Enable required GPU features for Vulkan compatibility
+        try:
+            gpu.state.program_point_size_set(True)
+        except (AttributeError, RuntimeError):
+            pass  # Not available in older Blender versions or when GPU context unavailable
+
         gpu.state.blend_set("ALPHA")
         gpu.state.point_size_set(self.point_size)
 
         col = self.color(context)
         shader.uniform_float("color", col)
-
-        if not self.is_point():
-            shader.uniform_bool("dashed", (self.is_dashed(),))
-            shader.uniform_float("dash_width", 0.05)
-            shader.uniform_float("dash_factor", 0.3)
-            gpu.state.line_width_set(self.line_width)
 
         batch.draw(shader)
         gpu.shader.unbind()
@@ -250,14 +246,15 @@ class SlvsGenericEntity:
         shader = self._id_shader
         shader.bind()
 
+        # Enable required GPU features for Vulkan compatibility
+        try:
+            gpu.state.program_point_size_set(True)
+        except AttributeError:
+            pass  # Not available in older Blender versions
+
         gpu.state.point_size_set(self.point_size_select)
 
         shader.uniform_float("color", (*index_to_rgb(self.slvs_index), 1.0))
-        if not self.is_point():
-            # viewport = [context.area.width, context.area.height]
-            # shader.uniform_float("Viewport", viewport)
-            shader.uniform_bool("dashed", (False,))
-            gpu.state.line_width_set(self.line_width_select)
 
         batch.draw(shader)
         gpu.shader.unbind()

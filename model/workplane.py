@@ -10,7 +10,7 @@ from bpy.utils import register_classes_factory
 
 from ..declarations import Operators
 from .. import global_data
-from ..utilities.draw import draw_rect_2d
+from ..utilities.draw import draw_rect_2d, draw_thick_line_3d, draw_thick_dashed_line_3d
 from ..shaders import Shaders
 from ..utilities import preferences
 from ..solver import Solver
@@ -44,15 +44,35 @@ class SlvsWorkplane(SlvsGenericEntity, PropertyGroup):
         if bpy.app.background:
             return
 
-        p1, nm = self.p1, self.nm
+        # Create thick line geometry for workplane edges (Vulkan compatible)
+        rect_coords = draw_rect_2d(0, 0, self.size, self.size)
+        rect_coords = [Vector(co) for co in rect_coords]
 
-        coords = draw_rect_2d(0, 0, self.size, self.size)
-        coords = [(Vector(co))[:] for co in coords]
+        # Use a much smaller width for workplane edges (accounting for view distance scaling)
+        line_width = 0.2
 
-        indices = ((0, 1), (1, 2), (2, 3), (3, 0))
+        all_coords = []
+        all_indices = []
+        vertex_offset = 0
+
+        # Draw each edge as thick line
+        edges = [(0, 1), (1, 2), (2, 3), (3, 0)]
+        for start_idx, end_idx in edges:
+            start_point = rect_coords[start_idx]
+            end_point = rect_coords[end_idx]
+
+            line_coords, line_indices = draw_thick_line_3d(start_point, end_point, line_width)
+            all_coords.extend(line_coords)
+
+            # Adjust indices for current vertex offset
+            adjusted_indices = [(idx[0] + vertex_offset, idx[1] + vertex_offset, idx[2] + vertex_offset) for idx in line_indices]
+            all_indices.extend(adjusted_indices)
+            vertex_offset += len(line_coords)
+
         self._batch = batch_for_shader(
-            self._shader, "LINES", {"pos": coords}, indices=indices
+            self._shader, "TRIS", {"pos": all_coords}, indices=all_indices
         )
+
         self.is_dirty = False
 
     # NOTE: probably better to avoid overwriting draw func..
