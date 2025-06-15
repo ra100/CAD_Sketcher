@@ -1,6 +1,7 @@
 from collections import deque
 from math import sin, cos
-from typing import List
+from typing import List, Tuple, Union
+from enum import Enum
 
 from mathutils import Vector, Matrix
 
@@ -130,296 +131,171 @@ def coords_arc_2d(
     return coords
 
 
-# Constants for thick rendering (Vulkan backend compatibility)
-THICK_LINE_SCALE = 0.005
-THICK_POINT_SCALE = 0.004
-WORKPLANE_LINE_SCALE = 0.0002  # Much thinner for workplane edges
-MIN_SEGMENT_LENGTH = 1e-6
-DEFAULT_DASH_LENGTH = 0.1
-DEFAULT_GAP_LENGTH = 0.05
+# Configuration for thick rendering (Vulkan backend compatibility)
+class RenderingConfig:
+    """Centralized configuration for thick rendering."""
+    THICK_LINE_SCALE = 0.005
+    THICK_POINT_SCALE = 0.004
+    WORKPLANE_LINE_SCALE = 0.0002
+    MIN_SEGMENT_LENGTH = 1e-6
+    DEFAULT_DASH_LENGTH = 0.1
+    DEFAULT_GAP_LENGTH = 0.05
 
+class RenderMode(Enum):
+    """Rendering modes for different entity types."""
+    SOLID = "solid"
+    DASHED = "dashed"
 
-def _calculate_perpendicular_offset(direction, width, scale_factor=THICK_LINE_SCALE):
-    """Calculate perpendicular offset vector for thick line rendering.
+class ThickRenderer:
+    """Unified thick rendering system for Vulkan backend compatibility."""
 
-    Args:
-        direction: Normalized direction vector
-        width: Line width
-        scale_factor: Scaling factor for thickness
+    @staticmethod
+    def _calculate_perpendicular_offset(direction: Vector, width: float, scale_factor: float = RenderingConfig.THICK_LINE_SCALE) -> Vector:
+        """Calculate perpendicular offset vector for thick line rendering."""
+        if direction.length < RenderingConfig.MIN_SEGMENT_LENGTH:
+            return Vector((0, 0, 0))
 
-    Returns:
-        Vector: Perpendicular offset vector
-    """
-    if direction.length < MIN_SEGMENT_LENGTH:
-        return Vector((0, 0, 0))
-
-    # Create perpendicular vector using cross product
-    # Choose axis that's most perpendicular to direction
-    if abs(direction.z) < 0.9:
-        perpendicular = direction.cross(Vector((0, 0, 1))).normalized()
-    else:
-        perpendicular = direction.cross(Vector((1, 0, 0))).normalized()
-
-    return perpendicular * (width * scale_factor)
-
-
-def _create_quad_geometry(start, end, offset):
-    """Create quad geometry from start/end points and offset.
-
-    Args:
-        start: Start point (Vector)
-        end: End point (Vector)
-        offset: Perpendicular offset vector
-
-    Returns:
-        tuple: (coords, indices) for quad rendered as triangles
-    """
-    coords = [
-        start - offset,
-        start + offset,
-        end + offset,
-        end - offset
-    ]
-
-    # Convert to tuples for GPU batch
-    coords = [co[:] for co in coords]
-
-    # Triangle indices for quad (two triangles)
-    indices = [(0, 1, 2), (0, 2, 3)]
-
-    return coords, indices
-
-
-def draw_thick_line_3d(start, end, width):
-    """Create thick line geometry using triangles for Vulkan compatibility.
-
-    Args:
-        start: Start point (Vector)
-        end: End point (Vector)
-        width: Line width
-
-    Returns:
-        tuple: (coords, indices) for triangle-based thick line
-    """
-    if not isinstance(start, Vector):
-        start = Vector(start)
-    if not isinstance(end, Vector):
-        end = Vector(end)
-
-    # Check for zero-length line
-    direction = end - start
-    if direction.length < MIN_SEGMENT_LENGTH:
-        return [], []
-
-    direction_normalized = direction.normalized()
-    offset = _calculate_perpendicular_offset(direction_normalized, width)
-
-    return _create_quad_geometry(start, end, offset)
-
-
-def draw_thick_point_3d(center, size):
-    """Create thick point geometry using triangles for Vulkan compatibility.
-
-    Args:
-        center: Center point (Vector)
-        size: Point size
-
-    Returns:
-        tuple: (coords, indices) for triangle-based thick point
-    """
-    if not isinstance(center, Vector):
-        center = Vector(center)
-
-    # Create a small quad centered at the point
-    half_size = size * THICK_POINT_SCALE
-
-    # Create quad vertices around center point
-    coords = [
-        (center.x - half_size, center.y - half_size, center.z),
-        (center.x + half_size, center.y - half_size, center.z),
-        (center.x + half_size, center.y + half_size, center.z),
-        (center.x - half_size, center.y + half_size, center.z)
-    ]
-
-    # Triangle indices for quad
-    indices = [(0, 1, 2), (0, 2, 3)]
-
-    return coords, indices
-
-
-def draw_thick_line_strip_3d(coords, width):
-    """Create thick line strip geometry using triangles for Vulkan compatibility.
-
-    Args:
-        coords: List of points forming the line strip
-        width: Line width
-
-    Returns:
-        tuple: (coords, indices) for triangle-based thick line strip
-    """
-    if len(coords) < 2:
-        return coords if coords else [], []
-
-    # Convert to Vector objects if needed and validate
-    points = []
-    for co in coords:
-        if isinstance(co, Vector):
-            points.append(co)
+        # Create perpendicular vector using cross product
+        if abs(direction.z) < 0.9:
+            perpendicular = direction.cross(Vector((0, 0, 1))).normalized()
         else:
-            points.append(Vector(co))
+            perpendicular = direction.cross(Vector((1, 0, 0))).normalized()
 
-    # Create thick line segments
-    thick_coords = []
-    indices = []
+        return perpendicular * (width * scale_factor)
 
-    for i in range(len(points) - 1):
-        start = points[i]
-        end = points[i + 1]
+    @staticmethod
+    def _create_quad_geometry(start: Vector, end: Vector, offset: Vector) -> Tuple[List[Tuple], List[Tuple]]:
+        """Create quad geometry from start/end points and offset."""
+        coords = [
+            (start - offset)[:],
+            (start + offset)[:],
+            (end + offset)[:],
+            (end - offset)[:]
+        ]
+        indices = [(0, 1, 2), (0, 2, 3)]
+        return coords, indices
 
-        # Skip zero-length segments
+    @classmethod
+    def render_point(cls, center: Union[Vector, Tuple], size: float) -> Tuple[List[Tuple], List[Tuple]]:
+        """Create thick point geometry using triangles."""
+        if not isinstance(center, Vector):
+            center = Vector(center)
+
+        half_size = size * RenderingConfig.THICK_POINT_SCALE
+        coords = [
+            (center.x - half_size, center.y - half_size, center.z),
+            (center.x + half_size, center.y - half_size, center.z),
+            (center.x + half_size, center.y + half_size, center.z),
+            (center.x - half_size, center.y + half_size, center.z)
+        ]
+        indices = [(0, 1, 2), (0, 2, 3)]
+        return coords, indices
+
+    @classmethod
+    def render_line(cls, start: Union[Vector, Tuple], end: Union[Vector, Tuple],
+                   width: float, mode: RenderMode = RenderMode.SOLID,
+                   dash_length: float = RenderingConfig.DEFAULT_DASH_LENGTH,
+                   gap_length: float = RenderingConfig.DEFAULT_GAP_LENGTH) -> Tuple[List[Tuple], List[Tuple]]:
+        """Unified line rendering for solid and dashed lines."""
+        if not isinstance(start, Vector):
+            start = Vector(start)
+        if not isinstance(end, Vector):
+            end = Vector(end)
+
         direction = end - start
-        if direction.length < MIN_SEGMENT_LENGTH:
-            continue
+        if direction.length < RenderingConfig.MIN_SEGMENT_LENGTH:
+            return [], []
 
-        direction_normalized = direction.normalized()
-        offset = _calculate_perpendicular_offset(direction_normalized, width)
-
-        # Add quad vertices for this segment
-        base_idx = len(thick_coords)
-        quad_coords, quad_indices = _create_quad_geometry(start, end, offset)
-
-        thick_coords.extend(quad_coords)
-
-        # Adjust indices for current vertex offset
-        adjusted_indices = [(idx[0] + base_idx, idx[1] + base_idx, idx[2] + base_idx)
-                          for idx in quad_indices]
-        indices.extend(adjusted_indices)
-
-    return thick_coords, indices
-
-
-def draw_thick_dashed_line_3d(start, end, width, dash_length=DEFAULT_DASH_LENGTH, gap_length=DEFAULT_GAP_LENGTH):
-    """Create thick dashed line geometry using triangles for Vulkan compatibility.
-
-    Args:
-        start: Start point (Vector)
-        end: End point (Vector)
-        width: Line width
-        dash_length: Length of each dash
-        gap_length: Length of each gap
-
-    Returns:
-        tuple: (coords, indices) for triangle-based thick dashed line
-    """
-    if not isinstance(start, Vector):
-        start = Vector(start)
-    if not isinstance(end, Vector):
-        end = Vector(end)
-
-    # Calculate line direction and length
-    direction = end - start
-    total_length = direction.length
-
-    if total_length < MIN_SEGMENT_LENGTH:
-        return [], []
-
-    direction_normalized = direction.normalized()
-    offset = _calculate_perpendicular_offset(direction_normalized, width)
-
-    # Create dashes
-    coords = []
-    indices = []
-    pattern_length = dash_length + gap_length
-    current_pos = 0.0
-
-    while current_pos < total_length:
-        # Create dash segment
-        dash_start = current_pos
-        dash_end = min(current_pos + dash_length, total_length)
-
-        if dash_end > dash_start:
-            # Calculate positions along the line
-            start_pos = start + direction_normalized * dash_start
-            end_pos = start + direction_normalized * dash_end
-
-            # Add quad geometry for this dash
-            base_idx = len(coords)
-            quad_coords, quad_indices = _create_quad_geometry(start_pos, end_pos, offset)
-
-            coords.extend(quad_coords)
-            adjusted_indices = [(idx[0] + base_idx, idx[1] + base_idx, idx[2] + base_idx)
-                              for idx in quad_indices]
-            indices.extend(adjusted_indices)
-
-        current_pos += pattern_length
-
-    return coords, indices
-
-
-def draw_thick_dashed_line_strip_3d(coords, width, dash_length=DEFAULT_DASH_LENGTH, gap_length=DEFAULT_GAP_LENGTH):
-    """Create thick dashed line strip geometry using triangles for Vulkan compatibility.
-
-    Args:
-        coords: List of points forming the line strip
-        width: Line width
-        dash_length: Length of each dash
-        gap_length: Length of each gap
-
-    Returns:
-        tuple: (coords, indices) for triangle-based thick dashed line strip
-    """
-    if len(coords) < 2:
-        return coords if coords else [], []
-
-    # Convert to Vector objects if needed
-    points = []
-    for co in coords:
-        if isinstance(co, Vector):
-            points.append(co)
+        if mode == RenderMode.SOLID:
+            return cls._render_solid_line(start, end, width)
         else:
-            points.append(Vector(co))
+            return cls._render_dashed_line(start, end, width, dash_length, gap_length)
 
-    # Create thick dashed line segments
-    thick_coords = []
-    indices = []
+    @classmethod
+    def _render_solid_line(cls, start: Vector, end: Vector, width: float) -> Tuple[List[Tuple], List[Tuple]]:
+        """Render a solid thick line."""
+        direction_normalized = (end - start).normalized()
+        offset = cls._calculate_perpendicular_offset(direction_normalized, width)
+        return cls._create_quad_geometry(start, end, offset)
 
-    for i in range(len(points) - 1):
-        start = points[i]
-        end = points[i + 1]
-
-        # Calculate segment length and direction
+    @classmethod
+    def _render_dashed_line(cls, start: Vector, end: Vector, width: float,
+                           dash_length: float, gap_length: float) -> Tuple[List[Tuple], List[Tuple]]:
+        """Render a dashed thick line."""
         direction = end - start
-        segment_length = direction.length
-
-        if segment_length < MIN_SEGMENT_LENGTH:
-            continue
-
+        total_length = direction.length
         direction_normalized = direction.normalized()
-        offset = _calculate_perpendicular_offset(direction_normalized, width)
+        offset = cls._calculate_perpendicular_offset(direction_normalized, width)
 
-        # Create dashes along this segment
+        coords = []
+        indices = []
         pattern_length = dash_length + gap_length
         current_pos = 0.0
 
-        while current_pos < segment_length:
-            # Create dash segment
-            dash_start = current_pos
-            dash_end = min(current_pos + dash_length, segment_length)
-
-            if dash_end > dash_start:
-                # Calculate positions along the segment
-                start_pos = start + direction_normalized * dash_start
+        while current_pos < total_length:
+            dash_end = min(current_pos + dash_length, total_length)
+            if dash_end > current_pos:
+                start_pos = start + direction_normalized * current_pos
                 end_pos = start + direction_normalized * dash_end
 
-                # Add quad geometry for this dash
-                base_idx = len(thick_coords)
-                quad_coords, quad_indices = _create_quad_geometry(start_pos, end_pos, offset)
+                base_idx = len(coords)
+                quad_coords, quad_indices = cls._create_quad_geometry(start_pos, end_pos, offset)
+                coords.extend(quad_coords)
 
-                thick_coords.extend(quad_coords)
                 adjusted_indices = [(idx[0] + base_idx, idx[1] + base_idx, idx[2] + base_idx)
                                   for idx in quad_indices]
                 indices.extend(adjusted_indices)
 
             current_pos += pattern_length
 
-    return thick_coords, indices
+        return coords, indices
+
+    @classmethod
+    def render_line_strip(cls, coords: List[Union[Vector, Tuple]], width: float,
+                         mode: RenderMode = RenderMode.SOLID,
+                         dash_length: float = RenderingConfig.DEFAULT_DASH_LENGTH,
+                         gap_length: float = RenderingConfig.DEFAULT_GAP_LENGTH) -> Tuple[List[Tuple], List[Tuple]]:
+        """Unified line strip rendering for solid and dashed line strips."""
+        if len(coords) < 2:
+            return coords if coords else [], []
+
+        # Convert to Vector objects
+        points = [Vector(co) if not isinstance(co, Vector) else co for co in coords]
+
+        all_coords = []
+        all_indices = []
+
+        for i in range(len(points) - 1):
+            segment_coords, segment_indices = cls.render_line(
+                points[i], points[i + 1], width, mode, dash_length, gap_length
+            )
+
+            if segment_coords:
+                base_idx = len(all_coords)
+                all_coords.extend(segment_coords)
+                adjusted_indices = [(idx[0] + base_idx, idx[1] + base_idx, idx[2] + base_idx)
+                                  for idx in segment_indices]
+                all_indices.extend(adjusted_indices)
+
+        return all_coords, all_indices
+
+# Legacy function wrappers for backward compatibility
+def draw_thick_point_3d(center, size):
+    """Legacy wrapper for thick point rendering."""
+    return ThickRenderer.render_point(center, size)
+
+def draw_thick_line_3d(start, end, width):
+    """Legacy wrapper for thick line rendering."""
+    return ThickRenderer.render_line(start, end, width)
+
+def draw_thick_dashed_line_3d(start, end, width, dash_length=RenderingConfig.DEFAULT_DASH_LENGTH, gap_length=RenderingConfig.DEFAULT_GAP_LENGTH):
+    """Legacy wrapper for thick dashed line rendering."""
+    return ThickRenderer.render_line(start, end, width, RenderMode.DASHED, dash_length, gap_length)
+
+def draw_thick_line_strip_3d(coords, width):
+    """Legacy wrapper for thick line strip rendering."""
+    return ThickRenderer.render_line_strip(coords, width)
+
+def draw_thick_dashed_line_strip_3d(coords, width, dash_length=RenderingConfig.DEFAULT_DASH_LENGTH, gap_length=RenderingConfig.DEFAULT_GAP_LENGTH):
+    """Legacy wrapper for thick dashed line strip rendering."""
+    return ThickRenderer.render_line_strip(coords, width, RenderMode.DASHED, dash_length, gap_length)

@@ -10,7 +10,7 @@ from bpy.utils import register_classes_factory
 
 from ..declarations import Operators
 from .. import global_data
-from ..utilities.draw import draw_rect_2d, draw_thick_line_3d, draw_thick_dashed_line_3d, WORKPLANE_LINE_SCALE
+from ..utilities.draw import draw_rect_2d, draw_thick_line_3d, RenderingConfig
 from ..shaders import Shaders
 from ..utilities import preferences
 from ..solver import Solver
@@ -41,6 +41,7 @@ class SlvsWorkplane(SlvsGenericEntity, PropertyGroup):
         return preferences.get_prefs().workplane_size
 
     def update(self):
+        """Update the workplane's visual representation with thick geometry for Vulkan compatibility."""
         if bpy.app.background:
             return
 
@@ -48,34 +49,34 @@ class SlvsWorkplane(SlvsGenericEntity, PropertyGroup):
         rect_coords = draw_rect_2d(0, 0, self.size, self.size)
         rect_coords = [Vector(co) for co in rect_coords]
 
-        # Use a much smaller width for workplane edges (accounting for view distance scaling)
-        line_width = WORKPLANE_LINE_SCALE
+        # Use a reasonable width for workplane edges
+        line_width = 0.2
 
-        all_coords = []
-        all_indices = []
+        # Create border batch for thick lines
+        border_coords = []
+        border_indices = []
         vertex_offset = 0
 
-        # Draw each edge as thick line
         edges = [(0, 1), (1, 2), (2, 3), (3, 0)]
         for start_idx, end_idx in edges:
             start_point = rect_coords[start_idx]
             end_point = rect_coords[end_idx]
 
             line_coords, line_indices = draw_thick_line_3d(start_point, end_point, line_width)
-            all_coords.extend(line_coords)
+            border_coords.extend(line_coords)
 
             # Adjust indices for current vertex offset
             adjusted_indices = [(idx[0] + vertex_offset, idx[1] + vertex_offset, idx[2] + vertex_offset) for idx in line_indices]
-            all_indices.extend(adjusted_indices)
+            border_indices.extend(adjusted_indices)
             vertex_offset += len(line_coords)
 
-        self._batch = batch_for_shader(
-            self._shader, "TRIS", {"pos": all_coords}, indices=all_indices
-        )
+        if border_coords and border_indices:
+            self._batch = batch_for_shader(
+                self._shader, "TRIS", {"pos": border_coords}, indices=border_indices
+            )
 
         self.is_dirty = False
 
-    # NOTE: probably better to avoid overwriting draw func..
     def draw(self, context):
         if not self.is_visible(context):
             return
@@ -86,24 +87,28 @@ class SlvsWorkplane(SlvsGenericEntity, PropertyGroup):
             gpu.matrix.scale(Vector((scale, scale, scale)))
 
             col = self.color(context)
-            # Let parent draw outline
+
+            # Let parent class handle borders with its alpha blending
             super().draw(context)
 
-            # Additionally draw a face
-            col_surface = col[:-1] + (0.2,)
+            # Add transparent surface AFTER parent renders borders
+            # Use the same alpha settings as parent
+            gpu.state.blend_set("ALPHA")
+
+            # Create surface with transparency
+            col_surface = col[:-1] + (0.3,) if len(col) >= 4 else (col[0], col[1], col[2], 0.3)
 
             shader = Shaders.uniform_color_3d()
             shader.bind()
-            gpu.state.blend_set("ALPHA")
-
             shader.uniform_float("color", col_surface)
 
             coords = draw_rect_2d(0, 0, self.size, self.size)
             coords = [Vector(co)[:] for co in coords]
             indices = ((0, 1, 2), (0, 2, 3))
-            batch = batch_for_shader(shader, "TRIS", {"pos": coords}, indices=indices)
-            batch.draw(shader)
+            surface_batch = batch_for_shader(shader, "TRIS", {"pos": coords}, indices=indices)
+            surface_batch.draw(shader)
 
+        # Let parent class handle cleanup
         self.restore_opengl_defaults()
 
     def draw_id(self, context):
@@ -111,7 +116,21 @@ class SlvsWorkplane(SlvsGenericEntity, PropertyGroup):
             scale = context.region_data.view_distance
             gpu.matrix.multiply_matrix(self.matrix_basis)
             gpu.matrix.scale(Vector((scale, scale, scale)))
+
+            # Draw borders for selection
             super().draw_id(context)
+
+            # Also draw surface for selection (to allow clicking anywhere on workplane)
+            shader = self._id_shader
+            shader.bind()
+            from ..utilities.index import index_to_rgb
+            shader.uniform_float("color", index_to_rgb(self.slvs_index))
+
+            coords = draw_rect_2d(0, 0, self.size, self.size)
+            coords = [Vector(co)[:] for co in coords]
+            indices = ((0, 1, 2), (0, 2, 3))
+            surface_batch = batch_for_shader(shader, "TRIS", {"pos": coords}, indices=indices)
+            surface_batch.draw(shader)
 
     def create_slvs_data(self, solvesys, group=Solver.group_fixed):
         handle = solvesys.addWorkplane(self.p1.py_data, self.nm.py_data, group=group)

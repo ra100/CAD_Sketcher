@@ -8,7 +8,6 @@ from gpu_extras.batch import batch_for_shader
 from mathutils import Matrix, Vector
 from bpy.utils import register_classes_factory
 
-from ..utilities.draw import draw_rect_2d, draw_thick_point_3d
 from ..solver import Solver
 from .base_entity import SlvsGenericEntity
 from .base_entity import Entity2D
@@ -24,28 +23,8 @@ class Point2D(Entity2D):
         return True
 
     def update(self):
-        """Update the point's visual representation with thick geometry for Vulkan compatibility.
-
-        Creates a triangle-based quad geometry for better visibility across different
-        graphics backends, especially Vulkan where traditional point rendering may
-        result in barely visible 1px points.
-        """
-        if bpy.app.background:
-            return
-
-        try:
-            coords, indices = draw_thick_point_3d(self.location, self.point_size)
-            if not coords:
-                # Fallback to ensure we have something to render
-                logger.warning(f"Failed to create thick point geometry for {self}")
-                return
-
-            kwargs = {"pos": coords}
-            self._batch = batch_for_shader(self._shader, "TRIS", kwargs, indices=indices)
-            self.is_dirty = False
-        except Exception as e:
-            logger.error(f"Error updating point {self}: {e}")
-            self.is_dirty = False  # Prevent infinite update loops
+        """Update the point's visual representation with thick geometry for Vulkan compatibility."""
+        self.update_thick_point(self.location, self.point_size)
 
     @property
     def location(self):

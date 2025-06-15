@@ -79,6 +79,7 @@ class SlvsArc(Entity2D, PropertyGroup):
         return self.construction
 
     def update(self):
+        """Update the arc's visual representation with thick geometry for Vulkan compatibility."""
         if bpy.app.background:
             return
 
@@ -102,16 +103,7 @@ class SlvsArc(Entity2D, PropertyGroup):
             mat = self.wp.matrix_basis @ mat_local
             coords = [(mat @ Vector((*co, 0)))[:] for co in coords]
 
-        from ..utilities.draw import draw_thick_line_strip_3d, draw_thick_dashed_line_strip_3d
-        if self.is_dashed():
-            thick_coords, indices = draw_thick_dashed_line_strip_3d(coords, self.line_width)
-        else:
-            thick_coords, indices = draw_thick_line_strip_3d(coords, self.line_width)
-        kwargs = {"pos": thick_coords}
-        self._batch = batch_for_shader(self._shader, "TRIS", kwargs, indices=indices)
-
-
-        self.is_dirty = False
+        self.update_thick_line_strip(coords, self.line_width, self.is_dashed())
 
     def create_slvs_data(self, solvesys, group=Solver.group_fixed):
         handle = solvesys.addArcOfCircle(

@@ -4,6 +4,7 @@ from typing import List
 import gpu
 from bpy.props import IntProperty, StringProperty, BoolProperty
 from bpy.types import Context
+from gpu_extras.batch import batch_for_shader
 
 from .. import global_data
 from ..utilities import preferences
@@ -13,11 +14,109 @@ from ..utilities.preferences import get_prefs
 from ..utilities.index import index_to_rgb, breakdown_index
 from ..utilities.view import update_cb
 from ..utilities.solver import update_system_cb
+from ..utilities.draw import ThickRenderer, RenderMode
 
 logger = logging.getLogger(__name__)
 
 
-class SlvsGenericEntity:
+class ThickRenderingMixin:
+    """Mixin class providing thick rendering functionality with error handling."""
+
+    def create_thick_batch(self, coords, indices, shader_type="TRIS"):
+        """Create a GPU batch from thick rendering coordinates and indices.
+
+        Args:
+            coords: List of coordinate tuples
+            indices: List of triangle indices
+            shader_type: Shader type (default: "TRIS")
+
+        Returns:
+            GPU batch object or None if creation fails
+        """
+        if not coords:
+            logger.warning(f"No coordinates provided for thick rendering batch in {self}")
+            return None
+
+        try:
+            kwargs = {"pos": coords}
+            batch = batch_for_shader(self._shader, shader_type, kwargs, indices=indices)
+            return batch
+        except Exception as e:
+            logger.error(f"Failed to create thick rendering batch for {self}: {e}")
+            return None
+
+    def update_thick_point(self, center, size):
+        """Update entity with thick point rendering.
+
+        Args:
+            center: Point center coordinates
+            size: Point size
+        """
+        if self._should_skip_update():
+            return
+
+        try:
+            coords, indices = ThickRenderer.render_point(center, size)
+            batch = self.create_thick_batch(coords, indices)
+            if batch:
+                self._batch = batch
+                self.is_dirty = False
+        except Exception as e:
+            logger.error(f"Error updating thick point {self}: {e}")
+            self.is_dirty = False  # Prevent infinite update loops
+
+    def update_thick_line(self, start, end, width, is_dashed=False):
+        """Update entity with thick line rendering.
+
+        Args:
+            start: Line start point
+            end: Line end point
+            width: Line width
+            is_dashed: Whether line should be dashed
+        """
+        if self._should_skip_update():
+            return
+
+        try:
+            mode = RenderMode.DASHED if is_dashed else RenderMode.SOLID
+            coords, indices = ThickRenderer.render_line(start, end, width, mode)
+            batch = self.create_thick_batch(coords, indices)
+            if batch:
+                self._batch = batch
+                self.is_dirty = False
+        except Exception as e:
+            logger.error(f"Error updating thick line {self}: {e}")
+            self.is_dirty = False
+
+    def update_thick_line_strip(self, coords, width, is_dashed=False):
+        """Update entity with thick line strip rendering.
+
+        Args:
+            coords: List of points forming the line strip
+            width: Line width
+            is_dashed: Whether line should be dashed
+        """
+        if self._should_skip_update():
+            return
+
+        try:
+            mode = RenderMode.DASHED if is_dashed else RenderMode.SOLID
+            thick_coords, indices = ThickRenderer.render_line_strip(coords, width, mode)
+            batch = self.create_thick_batch(thick_coords, indices)
+            if batch:
+                self._batch = batch
+                self.is_dirty = False
+        except Exception as e:
+            logger.error(f"Error updating thick line strip {self}: {e}")
+            self.is_dirty = False
+
+    def _should_skip_update(self):
+        """Check if update should be skipped (e.g., in background mode)."""
+        import bpy
+        return bpy.app.background
+
+
+class SlvsGenericEntity(ThickRenderingMixin):
     def entity_name_getter(self):
         return self.get("name", str(self))
 

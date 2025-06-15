@@ -17,7 +17,7 @@ from .base_entity import Entity2D
 from .utilities import slvs_entity_pointer, tag_update
 from .constants import CURVE_RESOLUTION
 from ..utilities.constants import HALF_TURN, FULL_TURN
-from ..utilities.draw import coords_arc_2d, draw_thick_line_strip_3d, draw_thick_dashed_line_strip_3d
+from ..utilities.draw import coords_arc_2d
 from .utilities import (
     get_bezier_curve_midpoint_positions,
     create_bezier_curve,
@@ -65,6 +65,7 @@ class SlvsCircle(Entity2D, PropertyGroup):
         return self.construction
 
     def update(self):
+        """Update the circle's visual representation with thick geometry for Vulkan compatibility."""
         if bpy.app.background:
             return
 
@@ -76,14 +77,7 @@ class SlvsCircle(Entity2D, PropertyGroup):
         mat = self.wp.matrix_basis @ mat_local
         coords = [(mat @ Vector((*co, 0)))[:] for co in coords]
 
-        if self.is_dashed():
-            thick_coords, indices = draw_thick_dashed_line_strip_3d(coords, self.line_width)
-        else:
-            thick_coords, indices = draw_thick_line_strip_3d(coords, self.line_width)
-        kwargs = {"pos": thick_coords}
-        self._batch = batch_for_shader(self._shader, "TRIS", kwargs, indices=indices)
-
-        self.is_dirty = False
+        self.update_thick_line_strip(coords, self.line_width, self.is_dashed())
 
     def create_slvs_data(self, solvesys, group=Solver.group_fixed):
         self.param = solvesys.addParamV(self.radius, group)
