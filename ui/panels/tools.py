@@ -37,3 +37,4 @@ class VIEW3D_PT_sketcher_tools(VIEW3D_PT_sketcher_base):
             layout.operator(declarations.Operators.NodeFill)
             layout.operator(declarations.Operators.NodeExtrude)
             layout.operator(declarations.Operators.NodeArrayLinear)
+
