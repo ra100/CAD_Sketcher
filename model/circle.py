@@ -10,7 +10,8 @@ from mathutils import Vector, Matrix
 from mathutils.geometry import intersect_line_sphere_2d, intersect_sphere_sphere_2d
 from bpy.utils import register_classes_factory
 
-from ..utilities.constants import BackendCache, RenderingConstants
+from ..utilities.constants import RenderingConstants
+from .vulkan_compat import DashedLineRenderer
 from ..solver import Solver
 from ..utilities.math import range_2pi, pol2cart
 from .base_entity import SlvsGenericEntity
@@ -28,39 +29,26 @@ logger = logging.getLogger(__name__)
 
 
 class SlvsCircle(Entity2D, PropertyGroup):
-    """Representation of a circle in 2D space. The circle is centered at ct with
-    its size defined by the radius and is resoulution independent.
+    """Representation of a circle in 2D. Constrained by a centerpoint and a radius.
 
     Arguments:
-        ct (SlvsPoint2D): Circle's centerpoint
-        radius (FloatProperty): The radius of the circle
-        nm (SlvsNormal2D):
+        ct (SlvsPoint2D): Centerpoint
+        radius (float): Radius
         sketch (SlvsSketch): The sketch this entity belongs to
     """
 
-    radius: FloatProperty(
-        name="Radius",
-        description="The radius of the circle",
-        subtype="DISTANCE",
-        min=0.0,
-        unit="LENGTH",
-        update=tag_update,
-    )
-
-    @classmethod
-    def is_path(cls):
-        return True
+    radius: FloatProperty(name="Radius", update=tag_update, precision=5, min=0.00001)
 
     @classmethod
     def is_curve(cls):
         return True
 
     @classmethod
-    def is_segment(cls):
+    def is_closed(cls):
         return True
 
     def dependencies(self) -> List[SlvsGenericEntity]:
-        return [self.nm, self.ct, self.sketch]
+        return [self.ct, self.sketch]
 
     def is_dashed(self):
         return self.construction
@@ -69,11 +57,8 @@ class SlvsCircle(Entity2D, PropertyGroup):
         if bpy.app.background:
             return
 
-        # Check if we're on Vulkan backend and this is a construction circle
-        is_vulkan = BackendCache.is_vulkan()
-
-        if is_vulkan and self.is_dashed():
-            # Create dashed circle geometry for Vulkan
+        if self.is_dashed():
+            # Create dashed circle geometry
             coords = self._create_dashed_circle_coords()
         else:
             # Standard solid circle
@@ -84,7 +69,7 @@ class SlvsCircle(Entity2D, PropertyGroup):
         mat = self.wp.matrix_basis @ mat_local
         coords = [(mat @ Vector((*co, 0)))[:] for co in coords]
 
-        if is_vulkan and self.is_dashed():
+        if self.is_dashed():
             # For dashed circles, use LINES instead of LINE_STRIP
             kwargs = {"pos": coords}
             self._batch = batch_for_shader(self._shader, "LINES", kwargs)
@@ -95,42 +80,48 @@ class SlvsCircle(Entity2D, PropertyGroup):
 
     def _create_dashed_circle_coords(self):
         """Create coordinates for a dashed circle with gaps."""
-        if self.radius <= 0:
+        radius = self.radius
+        if radius <= 0:
             return []
 
-        # Dash parameters (in radians) - use centralized constants
-        circumference = 2 * math.pi * self.radius
-        dash_length_world = RenderingConstants.DASH_LENGTH
-        gap_length_world = RenderingConstants.GAP_LENGTH
+        # Calculate segments per dash based on arc length
+        dash_arc_length = RenderingConstants.DASH_LENGTH
+        gap_arc_length = RenderingConstants.GAP_LENGTH
 
-        # Convert to angular measurements
-        dash_angle = dash_length_world / self.radius
-        gap_angle = gap_length_world / self.radius
+        # Convert to angles
+        dash_angle = dash_arc_length / radius
+        gap_angle = gap_arc_length / radius
         pattern_angle = dash_angle + gap_angle
 
-        # Calculate number of complete patterns
-        full_circle = 2 * math.pi
-        num_patterns = int(full_circle / pattern_angle)
+        # Number of complete patterns that fit in a full circle
+        num_patterns = int(FULL_TURN / pattern_angle)
 
         coords = []
-        segments_per_dash = max(3, int(CURVE_RESOLUTION * dash_angle / full_circle))
-
         current_angle = 0.0
+
+        # Use reasonable segment resolution for each dash
+        segments_per_dash = max(3, int(CURVE_RESOLUTION * dash_angle / FULL_TURN))
+
         for i in range(num_patterns):
             # Create dash segment
             dash_start = current_angle
-            dash_end = current_angle + dash_angle
+            dash_end = min(current_angle + dash_angle, FULL_TURN)
 
-            # Generate points for this dash
-            dash_coords = coords_arc_2d(0, 0, self.radius, segments_per_dash,
-                                      angle=dash_angle, offset=dash_start)
+            if dash_end > dash_start:
+                dash_coords = coords_arc_2d(0, 0, radius, segments_per_dash,
+                                          angle=(dash_end - dash_start),
+                                          offset=dash_start)
 
-            # Convert to line segments (pairs of points)
-            for j in range(len(dash_coords) - 1):
-                coords.extend([dash_coords[j], dash_coords[j + 1]])
+                # Convert to line segments (pairs of points)
+                for j in range(len(dash_coords) - 1):
+                    coords.extend([dash_coords[j], dash_coords[j + 1]])
 
             # Move to next dash (skip gap)
             current_angle += pattern_angle
+
+            # Stop if we've covered the entire circle
+            if current_angle >= FULL_TURN:
+                break
 
         return coords
 
@@ -159,10 +150,6 @@ class SlvsCircle(Entity2D, PropertyGroup):
 
     def placement(self):
         return self.wp.matrix_basis @ self.point_on_curve(45).to_3d()
-
-    @classmethod
-    def is_closed(cls):
-        return True
 
     def connection_points(self):
         # NOTE: it should probably be possible to lookup coincident points on circle
